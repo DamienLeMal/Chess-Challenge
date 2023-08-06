@@ -9,12 +9,13 @@ using static System.Formats.Asn1.AsnWriter;
 public class MyBot : IChessBot {
     int[] pieceValues = { 0, 100, 300, 310, 500, 900, 10000 };
     Move bestMove;
-    int maxDepth = 50;
-    int maxTime = 100;
+    int maxDepth = 4;
+    int maxTime = 1000000;
     int totalTime = 0;
+    int numberOdNodes;
     public Move Think (Board board, Timer timer)
     {
-
+        numberOdNodes = 0;
         bestMove = Move.NullMove;
         Move[] moves = board.GetLegalMoves();
         
@@ -37,8 +38,16 @@ public class MyBot : IChessBot {
         }
         totalTime += timer.MillisecondsElapsedThisTurn;
         int average = totalTime / (board.PlyCount/2+1);
-        Console.WriteLine("Average speed = " + average);
-        return transpositionsTable[board.ZobristKey & tpMask].BestMove;
+        //Console.WriteLine("Average speed = " + average + " max depth : " + transpositionsTable[board.ZobristKey & tpMask].Depth);
+        //Console.WriteLine("Number of nodes : " + numberOdNodes);
+
+        Move move = transpositionsTable[board.ZobristKey & tpMask].BestMove;
+        if (move == Move.NullMove) {
+            Console.WriteLine("NULL MOVE");
+            move = board.GetLegalMoves()[0];
+        }
+
+        return move;
     }
     int bestMoveChanged = 0;
     int EvaluateBoard (Board board, Timer timer, int depth, int color, int alpha, int beta, int ply = 0) {
@@ -59,8 +68,8 @@ public class MyBot : IChessBot {
         for (int i = 0; i < movesBestFirst.Length; i++) {
             if (movesBestFirst[i] == transposition.BestMove)
                 movePriorityTable[i] = 1;
-            else
-                movePriorityTable[i] = 999999;
+            else//heuristic
+                movePriorityTable[i] = 999999 - (BitboardHelper.GetNumberOfSetBits(board.WhitePiecesBitboard) - BitboardHelper.GetNumberOfSetBits(board.BlackPiecesBitboard));
         }
 
         //Need work to avoid draw by repetition
@@ -76,7 +85,7 @@ public class MyBot : IChessBot {
         foreach (Move m in movesBestFirst) {
 
             if (timer.MillisecondsElapsedThisTurn >= maxTime) return 999999;
-
+            numberOdNodes++;
             board.MakeMove(m);
             int score = -EvaluateBoard(board, timer, depth-1, -color, -beta, -alpha, ply+1);
             board.UndoMove(m);
@@ -106,7 +115,36 @@ public class MyBot : IChessBot {
             score += (b.GetPieceList((PieceType)i, true).Count - b.GetPieceList((PieceType)i, false).Count) * pieceValues[i];
 
         score *= color;
+        score += GetControllScore(b, color);
 
+        return score;
+    }
+
+    int GetControllScore (Board board, int color) {
+        int score = 0;
+        foreach (PieceList pieces in board.GetAllPieceLists()) {
+            foreach (Piece p in pieces) {
+                int count = 0;
+                switch (p.PieceType) {
+                    case PieceType.Pawn:
+                        count = BitboardHelper.GetNumberOfSetBits(BitboardHelper.GetPawnAttacks(p.Square, p.IsWhite));
+                        break;
+                    case PieceType.Knight:
+                        count = BitboardHelper.GetNumberOfSetBits(BitboardHelper.GetKnightAttacks(p.Square));
+                        break;
+                    case PieceType.Bishop:
+                    case PieceType.Rook:
+                    case PieceType.Queen:
+                        count = BitboardHelper.GetNumberOfSetBits(BitboardHelper.GetSliderAttacks(p.PieceType, p.Square, board));
+                        break;
+                    case PieceType.King:
+                        count = BitboardHelper.GetNumberOfSetBits(BitboardHelper.GetKingAttacks(p.Square));
+                        break;
+                }
+                score += count * pieceValues[(int)p.PieceType]/100 * color;
+            }
+        }
+        //Console.WriteLine(score);
         return score;
     }
 
