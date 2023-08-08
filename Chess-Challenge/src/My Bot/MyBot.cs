@@ -8,15 +8,12 @@ using static System.Formats.Asn1.AsnWriter;
 
 public class MyBot : IChessBot {
     int[] pieceValues = { 0, 100, 300, 310, 500, 900, 10000 };
-    Move bestMove;
-    int maxDepth = 10;
-    int maxTime = 1000;
-    int totalTime = 0;
+    Move bestMoveRoot;
+    int maxDepth = 5;
     public Move Think (Board board, Timer timer)
     {
-        bestMove = Move.NullMove;
+        bestMoveRoot = Move.NullMove;
         Move[] moves = board.GetLegalMoves();
-        maxTime = timer.MillisecondsRemaining / 30;
         
 
         //stop if checkmate or one move possible
@@ -26,30 +23,26 @@ public class MyBot : IChessBot {
             if (board.IsInCheckmate()) return m;
             board.UndoMove(m);
         }
-
+        int depth = 0;
         for (int i = 1; i <= maxDepth; i++) {
-            bestMoveChanged = 0;
+            depth = i;
             EvaluateBoard(board, timer, i, board.IsWhiteToMove ? 1 : -1, -999999, 999999, 0);
-            //Console.WriteLine(bestMoveChanged);
-            if (timer.MillisecondsElapsedThisTurn >= maxTime)
+            if (timer.MillisecondsElapsedThisTurn >= timer.MillisecondsRemaining / 1)
                 break;
         }
-        totalTime += timer.MillisecondsElapsedThisTurn;
-        int average = totalTime / (board.PlyCount/2+1);
-        //Console.WriteLine("Average speed = " + average + " max depth : " + transpositionsTable[board.ZobristKey & tpMask].Depth);
-
-        Move move = transpositionsTable[board.ZobristKey & tpMask].BestMove;
-        if (move == Move.NullMove) 
-            move = board.GetLegalMoves()[0];
-        return move;
+        //Console.WriteLine("reached depth " + depth + " in " + timer.MillisecondsElapsedThisTurn);
+        if (bestMoveRoot == Move.NullMove) {
+            bestMoveRoot = board.GetLegalMoves()[0];
+            Console.WriteLine("Null move");
+        }
+        return bestMoveRoot;
     }
-    int bestMoveChanged = 0;
     int EvaluateBoard (Board board, Timer timer, int depth, int color, int alpha, int beta, int ply = 0) {
 
         bool notRoot = ply > 0;
         int maxScore = -999999;
         int startingAlpha = alpha;
-        bool qSearch = depth <= 0;//when at the end 
+        Move bestMove = Move.NullMove;//Keep track of best move for current depth board step
 
         if (notRoot && board.IsRepeatedPosition()) return 0;
 
@@ -64,42 +57,42 @@ public class MyBot : IChessBot {
 
         if (depth == 0 || board.GetLegalMoves().Length == 0)
             return GetBoardScore(board, color);
-        
 
         //Ordering moves
 
-        Move[] movesBestFirst = board.GetLegalMoves(qSearch);
+        Move[] movesBestFirst = board.GetLegalMoves();
         int[] movePriorityTable = new int[movesBestFirst.Length];
 
         for (int i = 0; i < movesBestFirst.Length; i++) {
             if (movesBestFirst[i] == transposition.BestMove)
-                movePriorityTable[i] = 1;
-            else//heuristic
-                movePriorityTable[i] = 999999 - (BitboardHelper.GetNumberOfSetBits(board.WhitePiecesBitboard) - BitboardHelper.GetNumberOfSetBits(board.BlackPiecesBitboard));
+                movePriorityTable[i] = 999999;
         }
 
-        
+        Array.Sort(movePriorityTable, movesBestFirst);
+
+        Array.Reverse(movesBestFirst);
+
+
         foreach (Move m in movesBestFirst) {
 
-            if (timer.MillisecondsElapsedThisTurn >= maxTime) {
-                //Console.WriteLine(bestMove + " with score " + bestScore);
+            if (timer.MillisecondsElapsedThisTurn >= timer.MillisecondsRemaining / 1)
                 return 999999;
-            }
+
             board.MakeMove(m);
             int score = -EvaluateBoard(board, timer, depth-1, -color, -beta, -alpha, ply+1);
             board.UndoMove(m);
-
             if (score > maxScore) {
                 maxScore = score;
-                if (ply == 0 && bestMove != m)//only change if m is a legal move (undo move would result in current board)
-                    bestMove = m;
+                bestMove = m;
+
+                if (ply == 0)  //only change if m is a legal move (undo move would result in current board)
+                    bestMoveRoot = m;
+
                 alpha = Math.Max(alpha, maxScore);
                 if (alpha >= beta) break;
             }
         }
 
-        //Check for mate 
-        if (movesBestFirst.Length == 0 && !qSearch) return board.IsInCheck() ? -999999 + ply : 0;
 
 
         int bound = maxScore >= beta ? 2 : maxScore > startingAlpha ? 3 : 1;
@@ -119,34 +112,7 @@ public class MyBot : IChessBot {
             score += (b.GetPieceList((PieceType)i, true).Count - b.GetPieceList((PieceType)i, false).Count) * pieceValues[i];
 
         score *= color;
-        score += GetControllScore(b, color);
 
-        return score;
-    }
-
-    int GetControllScore (Board board, int color) {
-        int score = 0;
-        foreach (PieceList pieces in board.GetAllPieceLists()) {
-            foreach (Piece p in pieces) {
-                int count = 0;
-                switch (p.PieceType) {
-                    case PieceType.Pawn:
-                        break;
-                    case PieceType.Knight:
-                        count = BitboardHelper.GetNumberOfSetBits(BitboardHelper.GetKnightAttacks(p.Square));
-                        break;
-                    case PieceType.Bishop:
-                    case PieceType.Rook:
-                    case PieceType.Queen:
-                        count = BitboardHelper.GetNumberOfSetBits(BitboardHelper.GetSliderAttacks(p.PieceType, p.Square, board));
-                        break;
-                    case PieceType.King:
-                        //count = BitboardHelper.GetNumberOfSetBits(BitboardHelper.GetKingAttacks(p.Square));
-                        break;
-                }
-                score += count * pieceValues[(int)p.PieceType]/100 * color;
-            }
-        }
         return score;
     }
 
