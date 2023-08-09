@@ -98,6 +98,7 @@ namespace ChessChallenge.Application
             bool isGameWithHuman = whiteType is PlayerType.Human || blackType is PlayerType.Human;
             int fenIndex = isGameWithHuman ? 0 : botMatchGameIndex / 2;
             board.LoadPosition(botMatchStartFens[fenIndex]);
+            if (ForceFenPosition.Length != 0) board.LoadPosition(ForceFenPosition);
 
             // Player Setup
             PlayerWhite = CreatePlayer(whiteType);
@@ -298,7 +299,7 @@ namespace ChessChallenge.Application
                 {
                     UpdateBotMatchStats(result);
                     botMatchGameIndex++;
-                    int numGamesToPlay = botMatchStartFens.Length * 2;
+                    int numGamesToPlay = TotalGameCount; // botMatchStartFens.Length * 2;
 
                     if (botMatchGameIndex < numGamesToPlay && autoStartNextBotMatch)
                     {
@@ -440,7 +441,7 @@ namespace ChessChallenge.Application
 
 
         ChessPlayer PlayerToMove => board.IsWhiteToMove ? PlayerWhite : PlayerBlack;
-        public int TotalGameCount => botMatchStartFens.Length * 2;
+        public int TotalGameCount => NumberOfGames;//botMatchStartFens.Length * 2;
         public int CurrGameNumber => Math.Min(TotalGameCount, botMatchGameIndex + 1);
         public string AllPGNs => pgns.ToString();
 

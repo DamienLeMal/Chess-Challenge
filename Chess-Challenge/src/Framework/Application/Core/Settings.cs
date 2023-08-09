@@ -7,10 +7,12 @@ namespace ChessChallenge.Application
         public const string Version = "1.19";
 
         // Game settings
-        public const int GameDurationMilliseconds = 10 * 1000;
+        public const int NumberOfGames = 100;
+        public const int GameDurationMilliseconds = 300 * NumberOfGames;
         public const int IncrementMilliseconds = 0 * 1000;
         public const float MinMoveDelay = 0;
-        public static bool RunBotsOnSeparateThread = true; // IF NOT IN FAST FORWARD, TURN THIS ON - It's no longer readonly
+        public static string ForceFenPosition = "";//http://www.netreal.de/Forsyth-Edwards-Notation/index.php
+        public static bool RunBotsOnSeparateThread = false; // IF NOT IN FAST FORWARD, TURN THIS ON - It's no longer readonly
 
         // Display settings
         public const bool DisplayBoardCoordinates = true;
