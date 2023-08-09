@@ -8,7 +8,7 @@ namespace ChessChallenge.Application
 
         // Game settings
         public const int NumberOfGames = 100;
-        public const int GameDurationMilliseconds = 300 * NumberOfGames;
+        public const int GameDurationMilliseconds = 600 * NumberOfGames;
         public const int IncrementMilliseconds = 0 * 1000;
         public const float MinMoveDelay = 0;
         public static string ForceFenPosition = "";//http://www.netreal.de/Forsyth-Edwards-Notation/index.php

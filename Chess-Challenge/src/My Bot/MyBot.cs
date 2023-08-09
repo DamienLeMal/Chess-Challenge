@@ -7,7 +7,6 @@ using System.Reflection;
 using static System.Formats.Asn1.AsnWriter;
 
 public class MyBot : IChessBot {
-
     const ulong tpMask = 0x7FFFFF;
     Transposition[] transpositionsTable = new Transposition[tpMask + 1];
     Move bestMoveRoot;
@@ -21,7 +20,7 @@ public class MyBot : IChessBot {
         Move[] moves = board.GetLegalMoves();
         bestMoveRoot = moves[0];
         node = 0;// #DEBUG
-        maxTimePerTurn = clock.MillisecondsRemaining / 30;
+        maxTimePerTurn = clock.MillisecondsRemaining / 40;
 
         //stop if checkmate or one move possible
         if (moves.Length == 1) return moves[0];
@@ -38,35 +37,50 @@ public class MyBot : IChessBot {
             if (OutOfTime) return bestMoveRoot;
         }
     }
+
+    // alpha is minimum score assured after full analysis
+    // beta is maximum score assured after full analysis
+
     int EvaluateBoard (Board board, Timer timer, int depth, int alpha, int beta, int ply = 0) {
 
         bool notRoot = ply > 0;
+        bool qsearch = depth <= 0;
         int maxScore = -999999;
         int startingAlpha = alpha;
         Move bestMove = Move.NullMove;//Keep track of best move for current depth board step
 
-        if (notRoot && board.IsRepeatedPosition()) return 0;
+        if (notRoot && board.IsRepeatedPosition()) return 0;// before TT to avoid transposition loop
 
         ref Transposition transposition = ref transpositionsTable[board.ZobristKey & tpMask];
 
-        //Need work to avoid draw by repetition
         if (notRoot && transposition.ZHash == board.ZobristKey && transposition.Depth > depth && (
             transposition.Flag == 3 // exact score
             || transposition.Flag == 2 && transposition.Eval >= beta // lower bound, fail high
             || transposition.Flag == 1 && transposition.Eval <= alpha // upper bound, fail low
         )) return transposition.Eval;
 
-        if (depth == 0 || board.GetLegalMoves().Length == 0)
-            return GetBoardScore(board);
+        int eval = (transposition.ZHash == board.ZobristKey) ? transposition.StaticEval : GetBoardScore(board);
+
+        if (qsearch) {//final depth
+
+            maxScore = eval;
+            if (maxScore >= beta) return maxScore;//if maxscore is already better than maximum score assured, send it
+            alpha = Math.Max(alpha, maxScore);// else maxscore is our new minimum score assured
+
+        }
+
 
         //Ordering moves
 
-        Move[] movesBestFirst = board.GetLegalMoves();
+        Move[] movesBestFirst = board.GetLegalMoves(qsearch);//check only for capture in qsearch
         int[] movePriorityTable = new int[movesBestFirst.Length];
 
         for (int i = 0; i < movesBestFirst.Length; i++) {
             if (movesBestFirst[i] == transposition.BestMove)
                 movePriorityTable[i] = 999999;
+            else if (movesBestFirst[i].IsCapture) 
+                movePriorityTable[i] = 100 * (int)movesBestFirst[i].CapturePieceType - (int)movesBestFirst[i].MovePieceType;
+                                  // * 100 to make sure is positive and all capture are on the top of the priority
         }
 
         Array.Sort(movePriorityTable, movesBestFirst);
@@ -80,7 +94,7 @@ public class MyBot : IChessBot {
                 return 999999;
 
             board.MakeMove(m);
-            int score = -EvaluateBoard(board, timer, depth-1, -beta, -alpha, ply+1);
+            int score = -EvaluateBoard(board, timer, --depth, -beta, -alpha, ply+1);
             node++;//#DEBUG
             board.UndoMove(m);
             if (score > maxScore) {
@@ -89,24 +103,24 @@ public class MyBot : IChessBot {
 
                 if (ply == 0)  //only change if m is a legal move (undo move would result in current board)
                     bestMoveRoot = m;
-
                 alpha = Math.Max(alpha, maxScore);
-                if (alpha >= beta) break;
+                if (alpha >= beta) break;// if minimum score assured is better than maximum score assured no need to search further thanks to move ordering
             }
         }
 
-
+        if (!qsearch && movesBestFirst.Length == 0) 
+            return board.IsInCheck() ? 
+                -999999 + ply   // checkmate, -ply so further mate are less important than close ones
+                : 0;    //stalemate
 
         int bound = maxScore >= beta ? 2 : maxScore > startingAlpha ? 3 : 1;
         //Add to Transposition Table
-        transpositionsTable[board.ZobristKey & tpMask] = new Transposition(board.ZobristKey, maxScore, bestMove, (sbyte)depth, (sbyte)bound);
+        transpositionsTable[board.ZobristKey & tpMask] = new Transposition(board.ZobristKey, maxScore, eval, bestMove, (sbyte)depth, (sbyte)bound);
 
         return maxScore;
     }
 
     int GetBoardScore(Board b) {
-        if (b.IsInCheckmate()) return -999999;
-        if (b.IsRepeatedPosition()) return 0;
         int middlegame = 0, endgame = 0, gamephase = 0;
         foreach (bool sideToMove in new[] { true, false }) {
             for (int piece = -1, square; ++piece < 6;)
@@ -172,13 +186,14 @@ public class MyBot : IChessBot {
 
 struct Transposition {
     public ulong ZHash;
-    public int Eval;
+    public int Eval, StaticEval;
     public Move BestMove;
     public sbyte Depth, Flag;
 
-    public Transposition(ulong zHash, int eval, Move bestMove, sbyte depth, sbyte flag) {
+    public Transposition(ulong zHash, int eval, int staticEval, Move bestMove, sbyte depth, sbyte flag) {
         ZHash = zHash;
         Eval = eval;
+        StaticEval = staticEval;
         BestMove = bestMove;
         Depth = depth;
         Flag = flag;
