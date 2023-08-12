@@ -1,4 +1,5 @@
 ﻿using ChessChallenge.API;
+using ChessChallenge.Application;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -11,17 +12,20 @@ public class MyBot : IChessBot {
     Transposition[] transpositionsTable = new Transposition[tpMask + 1];
     Move bestMoveRoot;
     Timer clock;
-    int node = 0; //#DEBUG
-    int maxTimePerTurn;
+    int node = 0, qnode = 0; //#DEBUG
+    int timePerGame;
+    float maxTimePerTurn;
     bool OutOfTime => clock.MillisecondsElapsedThisTurn > maxTimePerTurn;
     public Move Think (Board board, Timer timer)
     {
+        if (board.PlyCount < 3) timePerGame = timer.MillisecondsRemaining;
         clock = timer;
         Move[] moves = board.GetLegalMoves();
         bestMoveRoot = moves[0];
-        node = 0;// #DEBUG
-        maxTimePerTurn = clock.MillisecondsRemaining / 40;
-
+        node = qnode = 0;// #DEBUG
+        float x = 1f - (float)clock.MillisecondsRemaining / (float)timePerGame;
+        maxTimePerTurn = clock.MillisecondsRemaining / 40;// (0.4852217f + 2.348933f*x-2.848933f*x*x) * timePerGame/30;
+        //Console.WriteLine(maxTimePerTurn);
         //stop if checkmate or one move possible
         if (moves.Length == 1) return moves[0];
         foreach (Move m in moves) {
@@ -31,18 +35,25 @@ public class MyBot : IChessBot {
         }
         for (int depth = 1;;) {
             EvaluateBoard(board, timer, ++depth, -999999, 999999, 0);
-            //Console.WriteLine("hit depth: " + depth + " in " + clock.MillisecondsElapsedThisTurn + "ms with an eval of " + // #DEBUG
+            //Console.WriteLine("My Bot hit depth: " + depth + " in " + clock.MillisecondsElapsedThisTurn + "ms with an eval of " + // #DEBUG
             //    transpositionsTable[board.ZobristKey & 0x3FFFFF].Eval + " centipawns"); // #DEBUG
-            //Console.WriteLine("Node per second : " + ((float)node / ((float)timer.MillisecondsElapsedThisTurn / 1000f) / 1000000f) + " Mnps");//#DEBUG
-            if (OutOfTime) return bestMoveRoot;
+            if (OutOfTime) return ReturnFunction(bestMoveRoot);
         }
+    }
+
+    Move ReturnFunction (Move function) {
+
+        //Console.WriteLine("Node : " + node);//#DEBUG
+        //Console.WriteLine("QNode : " + qnode);//#DEBUG
+        //Console.WriteLine("Total : " + (node + qnode));//#DEBUG
+        return function;
+    
     }
 
     // alpha is minimum score assured after full analysis
     // beta is maximum score assured after full analysis
 
-    int EvaluateBoard (Board board, Timer timer, int depth, int alpha, int beta, int ply = 0) {
-
+    int EvaluateBoard (Board board, Timer timer, int depth, int alpha, int beta, int ply) {
         bool notRoot = ply > 0;
         bool qsearch = depth <= 0;
         int maxScore = -999999;
@@ -52,35 +63,43 @@ public class MyBot : IChessBot {
         if (notRoot && board.IsRepeatedPosition()) return 0;// before TT to avoid transposition loop
 
         ref Transposition transposition = ref transpositionsTable[board.ZobristKey & tpMask];
-
+        
         if (notRoot && transposition.ZHash == board.ZobristKey && transposition.Depth > depth && (
             transposition.Flag == 3 // exact score
             || transposition.Flag == 2 && transposition.Eval >= beta // lower bound, fail high
             || transposition.Flag == 1 && transposition.Eval <= alpha // upper bound, fail low
         )) return transposition.Eval;
 
-        int eval = (transposition.ZHash == board.ZobristKey) ? transposition.StaticEval : GetBoardScore(board);
-
+        //Standing pat
         if (qsearch) {//final depth
+            qnode++; // #DEBUG
+            maxScore = GetBoardScore(board);
 
-            maxScore = eval;
-            if (maxScore >= beta) return maxScore;//if maxscore is already better than maximum score assured, send it
-            alpha = Math.Max(alpha, maxScore);// else maxscore is our new minimum score assured
+            //Delta pruning
+            if (board.GetAllPieceLists().Length >= 10 && board.GameMoveHistory.Length > 1) //Not used in endgame
+                if (maxScore < alpha - (975 + (board.GameMoveHistory.Last().IsPromotion ? 775 : 0))) return alpha;
 
-        }
+            if (maxScore >= beta) return maxScore;//if maxscore is better than beta, position is quiet
+            alpha = Math.Max(alpha, maxScore);
+
+        } else node++;//#DEBUG
 
 
         //Ordering moves
 
-        Move[] movesBestFirst = board.GetLegalMoves(qsearch);//check only for capture in qsearch
+        Move[] movesBestFirst = board.GetLegalMoves(qsearch && !board.IsInCheck());//check only for capture in qsearch exept if in check, to also search evading moves
         int[] movePriorityTable = new int[movesBestFirst.Length];
 
         for (int i = 0; i < movesBestFirst.Length; i++) {
             if (movesBestFirst[i] == transposition.BestMove)
                 movePriorityTable[i] = 999999;
-            else if (movesBestFirst[i].IsCapture) 
+            else if (movesBestFirst[i].IsPromotion)
+                movePriorityTable[i] = 888888;
+            else if (movesBestFirst[i].IsCapture)
                 movePriorityTable[i] = 100 * (int)movesBestFirst[i].CapturePieceType - (int)movesBestFirst[i].MovePieceType;
-                                  // * 100 to make sure is positive and all capture are on the top of the priority
+                                  // * 100 to make sure is positive and all capture are on the top of the priority Queen - Pawn = -943 at most
+        
+            //Other stay at 0
         }
 
         Array.Sort(movePriorityTable, movesBestFirst);
@@ -94,9 +113,9 @@ public class MyBot : IChessBot {
                 return 999999;
 
             board.MakeMove(m);
-            int score = -EvaluateBoard(board, timer, --depth, -beta, -alpha, ply+1);
-            node++;//#DEBUG
+            int score = -EvaluateBoard(board, timer, depth-1, -beta, -alpha, ply+1);
             board.UndoMove(m);
+
             if (score > maxScore) {
                 maxScore = score;
                 bestMove = m;
@@ -104,7 +123,10 @@ public class MyBot : IChessBot {
                 if (ply == 0)  //only change if m is a legal move (undo move would result in current board)
                     bestMoveRoot = m;
                 alpha = Math.Max(alpha, maxScore);
-                if (alpha >= beta) break;// if minimum score assured is better than maximum score assured no need to search further thanks to move ordering
+                if (alpha >= beta) {
+                    Console.WriteLine("Killer move at ply " + ply + " " + bestMove);
+                    break;// if minimum score assured is better than maximum score assured no need to search further thanks to move ordering
+                }       
             }
         }
 
@@ -113,9 +135,8 @@ public class MyBot : IChessBot {
                 -999999 + ply   // checkmate, -ply so further mate are less important than close ones
                 : 0;    //stalemate
 
-        int bound = maxScore >= beta ? 2 : maxScore > startingAlpha ? 3 : 1;
-        //Add to Transposition Table
-        transpositionsTable[board.ZobristKey & tpMask] = new Transposition(board.ZobristKey, maxScore, eval, bestMove, (sbyte)depth, (sbyte)bound);
+        //Add to Transposition Table                                                                                          Bound
+        transpositionsTable[board.ZobristKey & tpMask] = new Transposition(board.ZobristKey, maxScore, bestMove, (sbyte)depth, (sbyte)(maxScore >= beta ? 2 : maxScore > startingAlpha ? 3 : 1));
 
         return maxScore;
     }
@@ -147,7 +168,7 @@ public class MyBot : IChessBot {
 
     // Big table packed with data from premade piece square tables
     // Unpack using PackedEvaluationTables[set, rank] = file
-    private readonly decimal[] CorrectedPackedPestoTables = {
+    private readonly decimal[] PackedPestoTables = {
             63746705523041458768562654720m, 71818693703096985528394040064m, 75532537544690978830456252672m, 75536154932036771593352371712m, 76774085526445040292133284352m, 3110608541636285947269332480m, 936945638387574698250991104m, 75531285965747665584902616832m,
             77047302762000299964198997571m, 3730792265775293618620982364m, 3121489077029470166123295018m, 3747712412930601838683035969m, 3763381335243474116535455791m, 8067176012614548496052660822m, 4977175895537975520060507415m, 2475894077091727551177487608m,
             2458978764687427073924784380m, 3718684080556872886692423941m, 4959037324412353051075877138m, 3135972447545098299460234261m, 4371494653131335197311645996m, 9624249097030609585804826662m, 9301461106541282841985626641m, 2793818196182115168911564530m,
@@ -163,7 +184,7 @@ public class MyBot : IChessBot {
     // Constructor unpacks the tables and "bakes in" the piece values to use in your evaluation
     public MyBot() {
         UnpackedPestoTables = new int[64][];
-        UnpackedPestoTables = CorrectedPackedPestoTables.Select(packedTable => {
+        UnpackedPestoTables = PackedPestoTables.Select(packedTable => {
             int pieceType = 0;
             return decimal.GetBits(packedTable).Take(3)
                 .SelectMany(c => BitConverter.GetBytes(c)
@@ -182,20 +203,20 @@ public class MyBot : IChessBot {
             }
         }*/
     }
-}
 
-struct Transposition {
-    public ulong ZHash;
-    public int Eval, StaticEval;
-    public Move BestMove;
-    public sbyte Depth, Flag;
+    struct Transposition {
+        public ulong ZHash;
+        public int Eval;
+        public sbyte Depth, Flag;
+        public Move BestMove;
 
-    public Transposition(ulong zHash, int eval, int staticEval, Move bestMove, sbyte depth, sbyte flag) {
-        ZHash = zHash;
-        Eval = eval;
-        StaticEval = staticEval;
-        BestMove = bestMove;
-        Depth = depth;
-        Flag = flag;
+        public Transposition(ulong zHash, int eval, Move bestMove, sbyte depth, sbyte flag) {
+            ZHash = zHash;
+            Eval = eval;
+            BestMove = bestMove;
+            Depth = depth;
+            Flag = flag;
+        }
     }
 }
+

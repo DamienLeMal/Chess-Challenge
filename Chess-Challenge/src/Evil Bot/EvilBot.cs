@@ -1,6 +1,11 @@
 ﻿using ChessChallenge.API;
+using ChessChallenge.Application;
 using System;
+using System.Collections.Generic;
+using System.ComponentModel;
 using System.Linq;
+using System.Reflection;
+using static System.Formats.Asn1.AsnWriter;
 
 public class EvilBot : IChessBot {
     Move bestmoveRoot = Move.NullMove;
