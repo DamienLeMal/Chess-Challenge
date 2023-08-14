@@ -8,10 +8,10 @@ namespace ChessChallenge.Application
 
         // Game settings
         public const int NumberOfGames = 100;
-        public const int GameDurationMilliseconds = 300 * NumberOfGames;
+        public const int GameDurationMilliseconds = 600 * NumberOfGames;
         public const int IncrementMilliseconds = 0 * 1000;
         public const float MinMoveDelay = 0;
-        public static string ForceFenPosition = "";//http://www.netreal.de/Forsyth-Edwards-Notation/index.php
+        public static string ForceFenPosition = "";//https://www.dailychess.com/chess/chess-fen-viewer.php
         public static bool RunBotsOnSeparateThread = true; // IF NOT IN FAST FORWARD, TURN THIS ON - It's no longer readonly
 
         // Display settings

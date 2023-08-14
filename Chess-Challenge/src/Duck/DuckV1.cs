@@ -1,5 +1,4 @@
 ﻿using ChessChallenge.API;
-using ChessChallenge.Application;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -7,20 +6,21 @@ using System.Linq;
 using System.Reflection;
 using static System.Formats.Asn1.AsnWriter;
 
-public class EvilBot : IChessBot {
+public class DuckV1 : IChessBot {
     const ulong tpMask = 0x7FFFFF;
     Transposition[] transpositionsTable = new Transposition[tpMask + 1];
     Move bestMoveRoot;
     Timer clock;
-    int node = 0, qnode = 0; //#DEBUG
-    float maxTimePerTurn;
+    int node = 0; //#DEBUG
+    int maxTimePerTurn;
     bool OutOfTime => clock.MillisecondsElapsedThisTurn > maxTimePerTurn;
-    public Move Think(Board board, Timer timer) {
-        node = qnode = 0;// #DEBUG
+    public Move Think (Board board, Timer timer)
+    {
         clock = timer;
-        maxTimePerTurn = clock.MillisecondsRemaining / 40;
-
         Move[] moves = board.GetLegalMoves();
+        bestMoveRoot = moves[0];
+        node = 0;// #DEBUG
+        maxTimePerTurn = clock.MillisecondsRemaining / 40;
 
         //stop if checkmate or one move possible
         if (moves.Length == 1) return moves[0];
@@ -29,104 +29,74 @@ public class EvilBot : IChessBot {
             if (board.IsInCheckmate()) return m;
             board.UndoMove(m);
         }
-        bestMoveRoot = moves[0];
-        for (int depth = 1; ;) {
-            NegaScout(board, timer, ++depth, -999999, 999999, 0);
-            //Console.WriteLine("My Bot hit depth: " + depth + " in " + clock.MillisecondsElapsedThisTurn + " with best " + bestMoveRoot);// #DEBUG
-            //Console.WriteLine("My Bot hit depth: " + depth + " in " + clock.MillisecondsElapsedThisTurn + "ms with an eval of " + // #DEBUG
+        for (int depth = 1;;) {
+            EvaluateBoard(board, timer, ++depth, -999999, 999999, 0);
+            //Console.WriteLine("hit depth: " + depth + " in " + clock.MillisecondsElapsedThisTurn + "ms with an eval of " + // #DEBUG
             //    transpositionsTable[board.ZobristKey & 0x3FFFFF].Eval + " centipawns"); // #DEBUG
-            if (OutOfTime) return ReturnFunction(bestMoveRoot);
+            //Console.WriteLine("Node per second : " + ((float)node / ((float)timer.MillisecondsElapsedThisTurn / 1000f) / 1000000f) + " Mnps");//#DEBUG
+            if (OutOfTime) return bestMoveRoot;
         }
-    }
-
-    Move ReturnFunction(Move function) {
-        //Console.WriteLine("Node : " + node);//#DEBUG
-        //Console.WriteLine("QNode : " + qnode);//#DEBUG
-        //Console.WriteLine("Total : " + (node + qnode));//#DEBUG
-        return function;
-
     }
 
     // alpha is minimum score assured after full analysis
     // beta is maximum score assured after full analysis
 
-    int NegaScout (Board board, Timer timer, int depth, int alpha, int beta, int ply) {
+    int EvaluateBoard (Board board, Timer timer, int depth, int alpha, int beta, int ply = 0) {
+
         bool notRoot = ply > 0;
         bool qsearch = depth <= 0;
         int maxScore = -999999;
         int startingAlpha = alpha;
-        ulong zobristKey = board.ZobristKey;
-
         Move bestMove = Move.NullMove;//Keep track of best move for current depth board step
 
         if (notRoot && board.IsRepeatedPosition()) return 0;// before TT to avoid transposition loop
 
-        ref Transposition transposition = ref transpositionsTable[zobristKey & tpMask];
+        ref Transposition transposition = ref transpositionsTable[board.ZobristKey & tpMask];
 
-        if (notRoot && transposition.ZHash == zobristKey && transposition.Depth > depth) {
+        if (notRoot && transposition.ZHash == board.ZobristKey && transposition.Depth > depth && (
+            transposition.Flag == 3 // exact score
+            || transposition.Flag == 2 && transposition.Eval >= beta // lower bound, fail high
+            || transposition.Flag == 1 && transposition.Eval <= alpha // upper bound, fail low
+        )) return transposition.Eval;
 
-            int ttEval = transposition.Eval;//token count : 3 use => same, more uses and it's worth
-            int ttFlag = transposition.Flag;
+        int eval = (transposition.ZHash == board.ZobristKey) ? transposition.StaticEval : GetBoardScore(board);
 
-            if (ttFlag == 2) //Lower bound
-                alpha = Math.Max(alpha, ttEval);
-            else if (ttFlag == 1) //Upper bound
-                beta = Math.Min(beta, ttEval);
-            if (alpha >= beta || ttFlag == 1)
-                return ttEval;
-        }
-
-        //Standing pat
         if (qsearch) {//final depth
-            qnode++; // #DEBUG
-            maxScore = GetBoardScore(board);
 
-            //Delta pruning
-            if (board.GetAllPieceLists().Length >= 10 && board.GameMoveHistory.Length > 1) //Not used in endgame
-                if (maxScore < alpha - (975 + (board.GameMoveHistory.Last().IsPromotion ? 775 : 0))) return alpha;
+            maxScore = eval;
+            if (maxScore >= beta) return maxScore;//if maxscore is already better than maximum score assured, send it
+            alpha = Math.Max(alpha, maxScore);// else maxscore is our new minimum score assured
 
-            if (maxScore >= beta) return maxScore;//if maxscore is better than beta, position is quiet
-            alpha = Math.Max(alpha, maxScore);
-        } else node++;//#DEBUG
-
-
-        //Get moves
-        Move[] movesBestFirst = board.GetLegalMoves(qsearch && !board.IsInCheck());//check only for capture in qsearch exept if in check, to also search evading moves
-        int[] movePriorityTable = new int[movesBestFirst.Length];
-
-
-        //No available move
-        if (!qsearch && movesBestFirst.Length == 0)
-            return board.IsInCheck() ?
-                -999999 + ply   // checkmate, -ply so further mate are less important than close ones
-                : 0;    //stalemate
+        }
 
 
         //Ordering moves
 
-        for (int i = 0; i < movesBestFirst.Length; i++) {
-            Move m = movesBestFirst[i];
+        Move[] movesBestFirst = board.GetLegalMoves(qsearch);//check only for capture in qsearch
+        int[] movePriorityTable = new int[movesBestFirst.Length];
 
-            movePriorityTable[i] = m == transposition.BestMove ? 999999 :
-                m.IsPromotion ? 888888 :
-                m.IsCapture ? 1000 * (int)m.CapturePieceType - (int)m.MovePieceType : 0;
+        for (int i = 0; i < movesBestFirst.Length; i++) {
+            if (movesBestFirst[i] == transposition.BestMove)
+                movePriorityTable[i] = 999999;
+            else if (movesBestFirst[i].IsCapture) 
+                movePriorityTable[i] = 100 * (int)movesBestFirst[i].CapturePieceType - (int)movesBestFirst[i].MovePieceType;
+                                  // * 100 to make sure is positive and all capture are on the top of the priority
         }
 
         Array.Sort(movePriorityTable, movesBestFirst);
 
         Array.Reverse(movesBestFirst);
 
+
         foreach (Move m in movesBestFirst) {
+
             if (OutOfTime)
                 return 999999;
 
             board.MakeMove(m);
-            int score = -NegaScout(board, timer, depth - 1, -(alpha+1), -alpha, ply + 1);
-            if (score > alpha && score < beta) {
-                score = -NegaScout(board, timer, depth - 1, -beta, -score, ply + 1);
-            }
+            int score = -EvaluateBoard(board, timer, --depth, -beta, -alpha, ply+1);
+            node++;//#DEBUG
             board.UndoMove(m);
-
             if (score > maxScore) {
                 maxScore = score;
                 bestMove = m;
@@ -134,19 +104,18 @@ public class EvilBot : IChessBot {
                 if (ply == 0)  //only change if m is a legal move (undo move would result in current board)
                     bestMoveRoot = m;
                 alpha = Math.Max(alpha, maxScore);
-                if (alpha >= beta) {
-                    break;// if minimum score assured is better than maximum score assured no need to search further thanks to move ordering
-                }
+                if (alpha >= beta) break;// if minimum score assured is better than maximum score assured no need to search further thanks to move ordering
             }
         }
 
+        if (!qsearch && movesBestFirst.Length == 0) 
+            return board.IsInCheck() ? 
+                -999999 + ply   // checkmate, -ply so further mate are less important than close ones
+                : 0;    //stalemate
 
-        //Add to Transposition Table                                                                                          Bound
-        transpositionsTable[zobristKey & tpMask] = new Transposition(
-            zobristKey,
-            maxScore, bestMove,
-            (sbyte)depth,
-            (sbyte)(maxScore >= beta ? 2 : maxScore > startingAlpha ? 3 : 1));
+        int bound = maxScore >= beta ? 2 : maxScore > startingAlpha ? 3 : 1;
+        //Add to Transposition Table
+        transpositionsTable[board.ZobristKey & tpMask] = new Transposition(board.ZobristKey, maxScore, eval, bestMove, (sbyte)depth, (sbyte)bound);
 
         return maxScore;
     }
@@ -178,7 +147,7 @@ public class EvilBot : IChessBot {
 
     // Big table packed with data from premade piece square tables
     // Unpack using PackedEvaluationTables[set, rank] = file
-    private readonly decimal[] PackedPestoTables = {
+    private readonly decimal[] CorrectedPackedPestoTables = {
             63746705523041458768562654720m, 71818693703096985528394040064m, 75532537544690978830456252672m, 75536154932036771593352371712m, 76774085526445040292133284352m, 3110608541636285947269332480m, 936945638387574698250991104m, 75531285965747665584902616832m,
             77047302762000299964198997571m, 3730792265775293618620982364m, 3121489077029470166123295018m, 3747712412930601838683035969m, 3763381335243474116535455791m, 8067176012614548496052660822m, 4977175895537975520060507415m, 2475894077091727551177487608m,
             2458978764687427073924784380m, 3718684080556872886692423941m, 4959037324412353051075877138m, 3135972447545098299460234261m, 4371494653131335197311645996m, 9624249097030609585804826662m, 9301461106541282841985626641m, 2793818196182115168911564530m,
@@ -192,9 +161,9 @@ public class EvilBot : IChessBot {
     private int[][] UnpackedPestoTables;
 
     // Constructor unpacks the tables and "bakes in" the piece values to use in your evaluation
-    public EvilBot() {
+    public DuckV1() {
         UnpackedPestoTables = new int[64][];
-        UnpackedPestoTables = PackedPestoTables.Select(packedTable => {
+        UnpackedPestoTables = CorrectedPackedPestoTables.Select(packedTable => {
             int pieceType = 0;
             return decimal.GetBits(packedTable).Take(3)
                 .SelectMany(c => BitConverter.GetBytes(c)
@@ -213,19 +182,20 @@ public class EvilBot : IChessBot {
             }
         }*/
     }
+}
 
-    struct Transposition {
-        public ulong ZHash;
-        public int Eval;
-        public sbyte Depth, Flag;
-        public Move BestMove;
+struct Transposition {
+    public ulong ZHash;
+    public int Eval, StaticEval;
+    public Move BestMove;
+    public sbyte Depth, Flag;
 
-        public Transposition(ulong zHash, int eval, Move bestMove, sbyte depth, sbyte flag) {
-            ZHash = zHash;
-            Eval = eval;
-            BestMove = bestMove;
-            Depth = depth;
-            Flag = flag;
-        }
+    public Transposition(ulong zHash, int eval, int staticEval, Move bestMove, sbyte depth, sbyte flag) {
+        ZHash = zHash;
+        Eval = eval;
+        StaticEval = staticEval;
+        BestMove = bestMove;
+        Depth = depth;
+        Flag = flag;
     }
 }

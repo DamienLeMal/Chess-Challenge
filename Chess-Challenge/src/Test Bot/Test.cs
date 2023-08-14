@@ -1,4 +1,4 @@
-﻿using ChessChallenge.API;
+using ChessChallenge.API;
 using ChessChallenge.Application;
 using System;
 using System.Collections.Generic;
@@ -7,7 +7,7 @@ using System.Linq;
 using System.Reflection;
 using static System.Formats.Asn1.AsnWriter;
 
-public class EvilBot : IChessBot {
+public class Test : IChessBot {
     const ulong tpMask = 0x7FFFFF;
     Transposition[] transpositionsTable = new Transposition[tpMask + 1];
     Move bestMoveRoot;
@@ -31,7 +31,7 @@ public class EvilBot : IChessBot {
         }
         bestMoveRoot = moves[0];
         for (int depth = 1; ;) {
-            NegaScout(board, timer, ++depth, -999999, 999999, 0);
+            Negamax(board, timer, ++depth, -999999, 999999, 0);
             //Console.WriteLine("My Bot hit depth: " + depth + " in " + clock.MillisecondsElapsedThisTurn + " with best " + bestMoveRoot);// #DEBUG
             //Console.WriteLine("My Bot hit depth: " + depth + " in " + clock.MillisecondsElapsedThisTurn + "ms with an eval of " + // #DEBUG
             //    transpositionsTable[board.ZobristKey & 0x3FFFFF].Eval + " centipawns"); // #DEBUG
@@ -50,7 +50,7 @@ public class EvilBot : IChessBot {
     // alpha is minimum score assured after full analysis
     // beta is maximum score assured after full analysis
 
-    int NegaScout (Board board, Timer timer, int depth, int alpha, int beta, int ply) {
+    int Negamax(Board board, Timer timer, int depth, int alpha, int beta, int ply) {
         bool notRoot = ply > 0;
         bool qsearch = depth <= 0;
         int maxScore = -999999;
@@ -121,10 +121,7 @@ public class EvilBot : IChessBot {
                 return 999999;
 
             board.MakeMove(m);
-            int score = -NegaScout(board, timer, depth - 1, -(alpha+1), -alpha, ply + 1);
-            if (score > alpha && score < beta) {
-                score = -NegaScout(board, timer, depth - 1, -beta, -score, ply + 1);
-            }
+            int score = -Negamax(board, timer, depth - 1, -beta, -alpha, ply + 1);
             board.UndoMove(m);
 
             if (score > maxScore) {
@@ -192,7 +189,7 @@ public class EvilBot : IChessBot {
     private int[][] UnpackedPestoTables;
 
     // Constructor unpacks the tables and "bakes in" the piece values to use in your evaluation
-    public EvilBot() {
+    public Test() {
         UnpackedPestoTables = new int[64][];
         UnpackedPestoTables = PackedPestoTables.Select(packedTable => {
             int pieceType = 0;
@@ -229,3 +226,4 @@ public class EvilBot : IChessBot {
         }
     }
 }
+
